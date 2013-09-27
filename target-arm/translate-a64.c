@@ -3387,6 +3387,156 @@ static void disas_fp_1src(DisasContext *s, uint32_t insn)
     }
 }
 
+/* C3.6.26 Floating-point data-processing (2 source) - single precision */
+static void disas_fp_2src_single(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int opcode = extract32(insn, 12, 4);
+    int rm = extract32(insn, 16, 5);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_i64 tcg_tmp;
+    TCGv_i32 tcg_op1;
+    TCGv_i32 tcg_op2;
+    TCGv_i32 tcg_res;
+    TCGv_ptr fpst;
+
+    if (opcode > 8) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_tmp = tcg_temp_new_i64();
+    tcg_op1 = tcg_temp_new_i32();
+    tcg_op2 = tcg_temp_new_i32();
+    tcg_res = tcg_temp_new_i32();
+    fpst = get_fpstatus_ptr();
+
+    tcg_gen_ld_i64(tcg_tmp, cpu_env, freg_offs_n);
+    tcg_gen_trunc_i64_i32(tcg_op1, tcg_tmp);
+    tcg_gen_ld_i64(tcg_tmp, cpu_env, freg_offs_m);
+    tcg_gen_trunc_i64_i32(tcg_op2, tcg_tmp);
+
+    switch (opcode) {
+    case 0x0: /* FMUL */
+        gen_helper_vfp_muls(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x8: /* FNMUL */
+        gen_helper_vfp_muls(tcg_res, tcg_op1, tcg_op2, fpst);
+        gen_helper_vfp_negs(tcg_res, tcg_res);
+        break;
+    case 0x1: /* FDIV */
+        gen_helper_vfp_divs(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x2: /* FADD */
+        gen_helper_vfp_adds(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x3: /* FSUB */
+        gen_helper_vfp_subs(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x4: /* FMAX */
+        gen_helper_vfp_maxs(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x5: /* FMIN */
+        gen_helper_vfp_mins(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x6: /* FMAXNM */
+        gen_helper_vfp_maxnums(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x7: /* FMINNM */
+        gen_helper_vfp_minnums(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    default:
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_gen_extu_i32_i64(tcg_tmp, tcg_res);
+    tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d);
+    tcg_gen_movi_i64(tcg_tmp, 0);
+    tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d + sizeof(float64));
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i32(tcg_op1);
+    tcg_temp_free_i32(tcg_op2);
+    tcg_temp_free_i32(tcg_res);
+    tcg_temp_free_i64(tcg_tmp);
+}
+
+/* C3.6.26 Floating-point data-processing (2 source) - double precision */
+static void disas_fp_2src_double(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int rm = extract32(insn, 16, 5);
+    int opcode = extract32(insn, 12, 4);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_i64 tcg_op1;
+    TCGv_i64 tcg_op2;
+    TCGv_i64 tcg_res;
+    TCGv_ptr fpst;
+
+    if (opcode > 8) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_op1 = tcg_temp_new_i64();
+    tcg_op2 = tcg_temp_new_i64();
+    tcg_res = tcg_temp_new_i64();
+    fpst = get_fpstatus_ptr();
+
+    tcg_gen_ld_i64(tcg_op1, cpu_env, freg_offs_n);
+    tcg_gen_ld_i64(tcg_op2, cpu_env, freg_offs_m);
+
+    switch (opcode) {
+    case 0x0: /* FMUL */
+        gen_helper_vfp_muld(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x8: /* FNMUL */
+        gen_helper_vfp_muld(tcg_res, tcg_op1, tcg_op2, fpst);
+        gen_helper_vfp_negd(tcg_res, tcg_res);
+        break;
+    case 0x1: /* FDIV */
+        gen_helper_vfp_divd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x2: /* FADD */
+        gen_helper_vfp_addd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x3: /* FSUB */
+        gen_helper_vfp_subd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x4: /* FMAX */
+        gen_helper_vfp_maxd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x5: /* FMIN */
+        gen_helper_vfp_mind(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x6: /* FMAXNM */
+        gen_helper_vfp_maxnumd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    case 0x7: /* FMINNM */
+        gen_helper_vfp_minnumd(tcg_res, tcg_op1, tcg_op2, fpst);
+        break;
+    default:
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
+    tcg_gen_movi_i64(tcg_res, 0);
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d + sizeof(float64));
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i64(tcg_op1);
+    tcg_temp_free_i64(tcg_op2);
+    tcg_temp_free_i64(tcg_res);
+}
+
 /* C3.6.26 Floating point data-processing (2 source)
  *   31  30  29 28       24 23  22  21 20  16 15    12 11 10 9    5 4    0
  * +---+---+---+-----------+------+---+------+--------+-----+------+------+
@@ -3395,7 +3545,18 @@ static void disas_fp_1src(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_2src(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    int type = extract32(insn, 22, 2);
+
+    switch (type) {
+    case 0:
+        disas_fp_2src_single(s, insn);
+        break;
+    case 1:
+        disas_fp_2src_double(s, insn);
+        break;
+    default:
+        unallocated_encoding(s);
+    }
 }
 
 /* C3.6.27 Floating point data-processing (3 source)
