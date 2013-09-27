@@ -485,6 +485,11 @@ static inline void vfp_set_fpcr(CPUARMState *env, uint32_t val)
     vfp_set_fpscr(env, new_fpscr);
 }
 
+#define FPROUNDING_TIEEVEN 0
+#define FPROUNDING_POSINF 1
+#define FPROUNDING_NEGINF 2
+#define FPROUNDING_ZERO 3
+
 enum arm_cpu_mode {
   ARM_CPU_MODE_USR = 0x10,
   ARM_CPU_MODE_FIQ = 0x11,
