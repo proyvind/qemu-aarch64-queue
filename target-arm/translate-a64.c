@@ -3243,7 +3243,42 @@ static void disas_fp_3src(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_imm(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    int rd = extract32(insn, 0, 5);
+    int imm8 = extract32(insn, 13, 8);
+    int is_double = extract32(insn, 22, 2);
+    uint64_t imm;
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_i64 tcg_res;
+    TCGv_i64 tcg_zero;
+
+    if (is_double > 1) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    /* The imm8 encodes the sign bit, enough bits to represent
+     * an exponent in the range 01....1xx to 10....0xx,
+     * and the most significant 4 bits of the mantissa; see
+     * VFPExpandImm() in the v8 ARM ARM.
+     */
+    if (is_double) {
+        imm = (extract32(imm8, 7, 1) ? 0x8000 : 0) |
+            (extract32(imm8, 6, 1) ? 0x3fc0 : 0x4000) |
+            extract32(imm8, 0, 6);
+        imm <<= 48;
+    } else {
+        imm = (extract32(imm8, 7, 1) ? 0x8000 : 0) |
+            (extract32(imm8, 6, 1) ? 0x3e00 : 0x4000) |
+            (extract32(imm8, 0, 6) << 3);
+        imm <<= 16;
+    }
+
+    tcg_res = tcg_const_i64(imm);
+    tcg_zero = tcg_const_i64(0);
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
+    tcg_gen_st_i64(tcg_zero, cpu_env, freg_offs_d + sizeof(float64));
+    tcg_temp_free_i64(tcg_res);
+    tcg_temp_free_i64(tcg_zero);
 }
 
 static void handle_fpfpcvt(DisasContext *s, uint32_t insn, bool itof,
