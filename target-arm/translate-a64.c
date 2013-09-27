@@ -3202,6 +3202,183 @@ static void disas_fp_csel(DisasContext *s, uint32_t insn)
     unsupported_encoding(s, insn);
 }
 
+/* C3.6.25 Floating-point data-processing (1 source) - single precision */
+static void disas_fp_1src_single(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int opcode = extract32(insn, 15, 6);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_ptr fpst;
+    TCGv_i64 tcg_tmp;
+    TCGv_i32 tcg_op;
+    TCGv_i32 tcg_res;
+    bool skip_write = false;
+
+    if (opcode == 0x4) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    if (opcode == 0x7) {
+        /* XXX FCVT (single to half) */
+        unsupported_encoding(s, insn);
+        return;
+    }
+
+    fpst = get_fpstatus_ptr();
+    tcg_tmp = tcg_temp_new_i64();
+    tcg_op = tcg_temp_new_i32();
+    tcg_res = tcg_temp_new_i32();
+
+    tcg_gen_ld_i64(tcg_tmp, cpu_env, freg_offs_n);
+    tcg_gen_trunc_i64_i32(tcg_op, tcg_tmp);
+
+    switch (opcode) {
+    case 0x0: /* FMOV */
+        tcg_gen_mov_i32(tcg_res, tcg_op);
+        break;
+    case 0x1: /* FABS */
+        gen_helper_vfp_abss(tcg_res, tcg_op);
+        break;
+    case 0x2: /* FNEG */
+        gen_helper_vfp_negs(tcg_res, tcg_op);
+        break;
+    case 0x3: /* FSQRT */
+        gen_helper_vfp_sqrts(tcg_res, tcg_op, cpu_env);
+        break;
+    case 0x5: /* FCVT (single to double) */
+        skip_write = true;
+        gen_helper_vfp_fcvtds(tcg_tmp, tcg_op, cpu_env);
+        tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d);
+        tcg_gen_movi_i64(tcg_tmp, 0);
+        tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d + sizeof(float64));
+        break;
+    case 0x8: /* FRINTN */
+    case 0x9: /* FRINTP */
+    case 0xa: /* FRINTM */
+    case 0xb: /* FRINTZ */
+    case 0xc: /* FRINTA */
+    {
+        TCGv_i32 tcg_rmode = tcg_const_i32(opcode & 7);
+
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+        gen_helper_rints(tcg_res, tcg_op, fpst);
+
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+        tcg_temp_free_i32(tcg_rmode);
+        break;
+    }
+    case 0xe: /* FRINTX */
+        gen_helper_rints_exact(tcg_res, tcg_op, fpst);
+        break;
+    case 0xf: /* FRINTI */
+        gen_helper_rints(tcg_res, tcg_op, fpst);
+        break;
+    default:
+        unallocated_encoding(s);
+        break;
+    }
+
+    if (!skip_write) {
+        tcg_gen_extu_i32_i64(tcg_tmp, tcg_res);
+        tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d);
+        tcg_gen_movi_i64(tcg_tmp, 0);
+        tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d + sizeof(float64));
+    }
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i32(tcg_op);
+    tcg_temp_free_i32(tcg_res);
+    tcg_temp_free_i64(tcg_tmp);
+}
+
+/* C3.6.25 Floating-point data-processing (1 source) - double precision */
+static void disas_fp_1src_double(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int opcode = extract32(insn, 15, 6);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_ptr fpst;
+    TCGv_i64 tcg_op;
+    TCGv_i64 tcg_res;
+
+    if (opcode == 0x5) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    if (opcode == 0x7) {
+        /* XXX FCVT (double to half) */
+        unsupported_encoding(s, insn);
+        return;
+    }
+
+    fpst = get_fpstatus_ptr();
+    tcg_op = tcg_temp_new_i64();
+    tcg_res = tcg_temp_new_i64();
+
+    tcg_gen_ld_i64(tcg_op, cpu_env, freg_offs_n);
+
+    switch (opcode) {
+    case 0x0: /* FMOV */
+        tcg_gen_mov_i64(tcg_res, tcg_op);
+        break;
+    case 0x1: /* FABS */
+        gen_helper_vfp_absd(tcg_res, tcg_op);
+        break;
+    case 0x2: /* FNEG */
+        gen_helper_vfp_negd(tcg_res, tcg_op);
+        break;
+    case 0x3: /* FSQRT */
+        gen_helper_vfp_sqrtd(tcg_res, tcg_op, cpu_env);
+        break;
+    case 0x4: /* FCVT (double to single) */
+    {
+        TCGv_i32 tcg_tmp = tcg_temp_new_i32();
+        gen_helper_vfp_fcvtsd(tcg_tmp, tcg_op, cpu_env);
+        tcg_gen_extu_i32_i64(tcg_op, tcg_tmp);
+        tcg_temp_free_i32(tcg_tmp);
+        break;
+    }
+    case 0x8: /* FRINTN */
+    case 0x9: /* FRINTP */
+    case 0xa: /* FRINTM */
+    case 0xb: /* FRINTZ */
+    case 0xc: /* FRINTA */
+    {
+        TCGv_i32 tcg_rmode = tcg_const_i32(opcode & 7);
+
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+        gen_helper_rintd(tcg_res, tcg_op, fpst);
+
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+        tcg_temp_free_i32(tcg_rmode);
+        break;
+    }
+    case 0xe: /* FRINTX */
+        gen_helper_rintd_exact(tcg_res, tcg_op, fpst);
+        break;
+    case 0xf: /* FRINTI */
+        gen_helper_rintd(tcg_res, tcg_op, fpst);
+        break;
+    default:
+        unallocated_encoding(s);
+        break;
+    }
+
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
+    tcg_gen_movi_i64(tcg_res, 0);
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d + sizeof(float64));
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i64(tcg_op);
+    tcg_temp_free_i64(tcg_res);
+}
+
 /* C3.6.25 Floating point data-processing (1 source)
  *   31  30  29 28       24 23  22  21 20    15 14       10 9    5 4    0
  * +---+---+---+-----------+------+---+--------+-----------+------+------+
@@ -3210,7 +3387,27 @@ static void disas_fp_csel(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_1src(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    int type = extract32(insn, 22, 2);
+    int opcode = extract32(insn, 15, 6);
+
+    if (opcode > 0xf || opcode == 0x6 || opcode == 0xd) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    switch (type) {
+    case 0:
+        disas_fp_1src_single(s, insn);
+        break;
+    case 1:
+        disas_fp_1src_double(s, insn);
+        break;
+    case 3:
+        unsupported_encoding(s, insn);
+        break;
+    default:
+        unallocated_encoding(s);
+    }
 }
 
 /* C3.6.26 Floating point data-processing (2 source)

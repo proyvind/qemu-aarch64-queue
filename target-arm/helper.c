@@ -4317,3 +4317,54 @@ float64 VFP_HELPER(minnm, d)(float64 a, float64 b, void *fpstp)
     float_status *fpst = fpstp;
     return float64_minnum(a, b, fpst);
 }
+
+/* ARMv8 round to integral */
+float32 HELPER(rints_exact)(float32 x, void *fp_status)
+{
+    return float32_round_to_int(x, fp_status);
+}
+
+float64 HELPER(rintd_exact)(float64 x, void *fp_status)
+{
+    return float64_round_to_int(x, fp_status);
+}
+
+float32 HELPER(rints)(float32 x, void *fp_status)
+{
+    int old_flags = get_float_exception_flags(fp_status), new_flags;
+    float32 ret;
+
+    ret = float32_round_to_int(x, fp_status);
+
+    new_flags = get_float_exception_flags(fp_status);
+
+    /* Unless it is explicitly requested the round to integral instructions
+     * do not raise an inexact exception. Use the _exact form of this
+     * helper if this behaviour is required.
+     */
+    if ((new_flags & float_flag_inexact) && !(old_flags & float_flag_inexact)) {
+        set_float_exception_flags(new_flags & ~float_flag_inexact, fp_status);
+    }
+
+    return ret;
+}
+
+float64 HELPER(rintd)(float64 x, void *fp_status)
+{
+    int old_flags = get_float_exception_flags(fp_status), new_flags;
+    float64 ret;
+
+    ret = float64_round_to_int(x, fp_status);
+
+    new_flags = get_float_exception_flags(fp_status);
+
+    /* Unless it is explicitly requested the round to integral instructions
+     * do not raise an inexact exception. Use the _exact form of this
+     * helper if this behaviour is required.
+     */
+    if ((new_flags & float_flag_inexact) && !(old_flags & float_flag_inexact)) {
+        set_float_exception_flags(new_flags & ~float_flag_inexact, fp_status);
+    }
+
+    return ret;
+}
