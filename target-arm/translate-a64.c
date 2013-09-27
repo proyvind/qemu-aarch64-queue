@@ -3574,6 +3574,112 @@ static void disas_fp_2src(DisasContext *s, uint32_t insn)
     }
 }
 
+/* C3.6.27 Floating-point data-processing (3 source) - single precision */
+static void disas_fp_3src_single(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int ra = extract32(insn, 10, 5);
+    int rm = extract32(insn, 16, 5);
+    bool o0 = extract32(insn, 15, 1);
+    bool o1 = extract32(insn, 21, 1);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_a = offsetof(CPUARMState, vfp.regs[ra * 2]);
+    int freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_i64 tcg_tmp = tcg_temp_new_i64();
+    TCGv_i32 tcg_op1 = tcg_temp_new_i32();
+    TCGv_i32 tcg_op2 = tcg_temp_new_i32();
+    TCGv_i32 tcg_op3 = tcg_temp_new_i32();
+    TCGv_i32 tcg_res = tcg_temp_new_i32();
+    TCGv_ptr fpst = get_fpstatus_ptr();
+
+    tcg_gen_ld_i32(tcg_op1, cpu_env, freg_offs_n);
+    tcg_gen_ld_i32(tcg_op2, cpu_env, freg_offs_m);
+    tcg_gen_ld_i32(tcg_op3, cpu_env, freg_offs_a);
+
+    /* These are fused multiply-add, and must be done as one
+     * floating point operation with no rounding between the
+     * multiplication and addition steps.
+     * NB that doing the negations here as separate steps is
+     * correct : an input NaN should come out with its sign bit
+     * flipped if it is a negated-input.
+     */
+
+    if (o1 == true) {
+        gen_helper_vfp_negs(tcg_op3, tcg_op3);
+    }
+
+    if (o0 != o1) {
+        gen_helper_vfp_negs(tcg_op1, tcg_op1);
+    }
+
+    gen_helper_vfp_muladds(tcg_res, tcg_op1, tcg_op2, tcg_op3, fpst);
+
+    tcg_gen_extu_i32_i64(tcg_tmp, tcg_res);
+    tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d);
+    tcg_gen_movi_i64(tcg_tmp, 0);
+    tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs_d + sizeof(float64));
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i32(tcg_op1);
+    tcg_temp_free_i32(tcg_op2);
+    tcg_temp_free_i32(tcg_op3);
+    tcg_temp_free_i32(tcg_res);
+    tcg_temp_free_i64(tcg_tmp);
+}
+
+/* C3.6.27 Floating-point data-processing (3 source) - double precision */
+static void disas_fp_3src_double(DisasContext *s, uint32_t insn)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int ra = extract32(insn, 10, 5);
+    int rm = extract32(insn, 16, 5);
+    bool o0 = extract32(insn, 15, 1);
+    bool o1 = extract32(insn, 21, 1);
+    int freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    int freg_offs_a = offsetof(CPUARMState, vfp.regs[ra * 2]);
+    int freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    int freg_offs_d = offsetof(CPUARMState, vfp.regs[rd * 2]);
+    TCGv_i64 tcg_op1 = tcg_temp_new_i64();
+    TCGv_i64 tcg_op2 = tcg_temp_new_i64();
+    TCGv_i64 tcg_op3 = tcg_temp_new_i64();
+    TCGv_i64 tcg_res = tcg_temp_new_i64();
+    TCGv_ptr fpst = get_fpstatus_ptr();
+
+    tcg_gen_ld_i64(tcg_op1, cpu_env, freg_offs_n);
+    tcg_gen_ld_i64(tcg_op2, cpu_env, freg_offs_m);
+    tcg_gen_ld_i64(tcg_op3, cpu_env, freg_offs_a);
+
+    /* These are fused multiply-add, and must be done as one
+     * floating point operation with no rounding between the
+     * multiplication and addition steps.
+     * NB that doing the negations here as separate steps is
+     * correct : an input NaN should come out with its sign bit
+     * flipped if it is a negated-input.
+     */
+    if (o1 == true) {
+        gen_helper_vfp_negd(tcg_op3, tcg_op3);
+    }
+
+    if (o0 != o1) {
+        gen_helper_vfp_negd(tcg_op1, tcg_op1);
+    }
+
+    gen_helper_vfp_muladdd(tcg_res, tcg_op1, tcg_op2, tcg_op3, fpst);
+
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
+    tcg_gen_movi_i64(tcg_res, 0);
+    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d + sizeof(float64));
+
+    tcg_temp_free_ptr(fpst);
+    tcg_temp_free_i64(tcg_op1);
+    tcg_temp_free_i64(tcg_op2);
+    tcg_temp_free_i64(tcg_op3);
+    tcg_temp_free_i64(tcg_res);
+}
+
 /* C3.6.27 Floating point data-processing (3 source)
  *   31  30  29 28       24 23  22  21  20  16  15  14  10 9    5 4    0
  * +---+---+---+-----------+------+----+------+----+------+------+------+
@@ -3582,7 +3688,18 @@ static void disas_fp_2src(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_3src(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    int type = extract32(insn, 22, 2);
+
+    switch (type) {
+    case 0:
+        disas_fp_3src_single(s, insn);
+        break;
+    case 1:
+        disas_fp_3src_double(s, insn);
+        break;
+    default:
+        unallocated_encoding(s);
+    }
 }
 
 /* C3.6.28 Floating point immediate
