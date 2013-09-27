@@ -3925,36 +3925,67 @@ float32 VFP_HELPER(fcvts, d)(float64 x, CPUARMState *env)
 }
 
 /* VFP3 fixed point conversion.  */
-#define VFP_CONV_FIX(name, p, fsz, itype, sign) \
-float##fsz HELPER(vfp_##name##to##p)(uint##fsz##_t  x, uint32_t shift, \
+#define VFP_CONV_FIX(name, p, fsz, isz, itype, sign) \
+float##fsz HELPER(vfp_##name##to##p)(uint##isz##_t  x, uint32_t shift, \
                                     void *fpstp) \
 { \
     float_status *fpst = fpstp; \
     float##fsz tmp; \
-    tmp = sign##int32_to_##float##fsz((itype##_t)x, fpst); \
+    tmp = sign##int##isz##_to_##float##fsz((itype##_t)x, fpst); \
     return float##fsz##_scalbn(tmp, -(int)shift, fpst); \
 } \
-uint##fsz##_t HELPER(vfp_to##name##p)(float##fsz x, uint32_t shift, \
-                                       void *fpstp) \
+uint##isz##_t HELPER(vfp_to##name##p)(float##fsz x, \
+                                      uint32_t shift, \
+                                      void *fpstp) \
+{ \
+    float_status *fpst = fpstp; \
+    /* If scalb overflows or underflows don't make it visible. */ \
+    float_status dummy_status = *fpst; \
+    float_status *s = &dummy_status; \
+    float##fsz tmp; \
+    uint##isz##_t r; \
+    if (float##fsz##_is_any_nan(x)) { \
+        float_raise(float_flag_invalid, fpst); \
+        return 0; \
+    } \
+    tmp = float##fsz##_scalbn(x, shift, s); \
+    r = float##fsz##_to_##itype(tmp, fpst); \
+    return r; \
+}
+
+#define VFP_CONV_FIX_RZ(name, p, fsz, isz, itype, sign) \
+uint##isz##_t HELPER(vfp_to##name##p##_round_zero)(float##fsz x, \
+                                                   uint32_t shift, \
+                                                   void *fpstp) \
 { \
     float_status *fpst = fpstp; \
     float##fsz tmp; \
+    uint##isz##_t r; \
     if (float##fsz##_is_any_nan(x)) { \
         float_raise(float_flag_invalid, fpst); \
         return 0; \
     } \
     tmp = float##fsz##_scalbn(x, shift, fpst); \
-    return float##fsz##_to_##itype##_round_to_zero(tmp, fpst); \
-}
+    r = float##fsz##_to_##itype##_round_to_zero(tmp, fpst); \
+    return r; \
+} \
 
-VFP_CONV_FIX(sh, d, 64, int16, )
-VFP_CONV_FIX(sl, d, 64, int32, )
-VFP_CONV_FIX(uh, d, 64, uint16, u)
-VFP_CONV_FIX(ul, d, 64, uint32, u)
-VFP_CONV_FIX(sh, s, 32, int16, )
-VFP_CONV_FIX(sl, s, 32, int32, )
-VFP_CONV_FIX(uh, s, 32, uint16, u)
-VFP_CONV_FIX(ul, s, 32, uint32, u)
+#define VFP_CONV_FIX_A32(name, p, fsz, isz, itype, sign) \
+VFP_CONV_FIX(name, p, fsz, isz, itype, sign) \
+VFP_CONV_FIX_RZ(name, p, fsz, isz, itype, sign)
+
+VFP_CONV_FIX_A32(sh, d, 64, 64, int16, )
+VFP_CONV_FIX_A32(sl, d, 64, 64, int32, )
+VFP_CONV_FIX(sq, d, 64, 64, int64, )
+VFP_CONV_FIX_A32(uh, d, 64, 64, uint16, u)
+VFP_CONV_FIX_A32(ul, d, 64, 64, uint32, u)
+VFP_CONV_FIX(uq, d, 64, 64, uint64, u)
+VFP_CONV_FIX_A32(sh, s, 32, 32, int16, )
+VFP_CONV_FIX_A32(sl, s, 32, 32, int32, )
+VFP_CONV_FIX(sq, s, 32, 64, int64, )
+VFP_CONV_FIX_A32(uh, s, 32, 32, uint16, u)
+VFP_CONV_FIX_A32(ul, s, 32, 32, uint32, u)
+VFP_CONV_FIX(uq, s, 32, 64, uint64, u)
 #undef VFP_CONV_FIX
 
 /* Half precision conversions.  */
