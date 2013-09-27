@@ -98,3 +98,45 @@ void HELPER(set_rmode)(uint32_t rmode, void *fp_status)
 
     set_float_rounding_mode(rmode, fp_status);
 }
+
+float32 HELPER(rints_exact)(float32 x, void *fp_status)
+{
+    return float32_round_to_int(x, fp_status);
+}
+
+float64 HELPER(rintd_exact)(float64 x, void *fp_status)
+{
+    return float64_round_to_int(x, fp_status);
+}
+
+float32 HELPER(rints)(float32 x, void *fp_status)
+{
+    int old_flags = get_float_exception_flags(fp_status), new_flags;
+    float32 ret;
+
+    ret = float32_round_to_int(x, fp_status);
+
+    new_flags = get_float_exception_flags(fp_status);
+
+    if ((new_flags & float_flag_inexact) && !(old_flags & float_flag_inexact)) {
+        set_float_exception_flags(new_flags & ~float_flag_inexact, fp_status);
+    }
+
+    return ret;
+}
+
+float64 HELPER(rintd)(float64 x, void *fp_status)
+{
+    int old_flags = get_float_exception_flags(fp_status), new_flags;
+    float64 ret;
+
+    ret = float64_round_to_int(x, fp_status);
+
+    new_flags = get_float_exception_flags(fp_status);
+
+    if ((new_flags & float_flag_inexact) && !(old_flags & float_flag_inexact)) {
+        set_float_exception_flags(new_flags & ~float_flag_inexact, fp_status);
+    }
+
+    return ret;
+}
