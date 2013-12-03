@@ -77,3 +77,34 @@ uint64_t HELPER(rbit64)(uint64_t x)
 
     return x;
 }
+
+uint32_t HELPER(set_rmode)(uint32_t rmode, CPUARMState *env)
+{
+    float_status *fp_status = &env->vfp.fp_status;
+    uint32_t prev_rmode = (vfp_get_fpcr(env) >> 22) & 3;
+
+    switch (rmode) {
+    case FPROUNDING_TIEAWAY:
+    case FPROUNDING_ODD:
+        /* FIXME: add support for TIEAWAY and ODD */
+        qemu_log_mask(LOG_UNIMP, "arm: unimplemented rounding mode: %d\n",
+                      rmode);
+    case FPROUNDING_TIEEVEN:
+    default:
+        rmode = float_round_nearest_even;
+        break;
+    case FPROUNDING_POSINF:
+        rmode = float_round_up;
+        break;
+    case FPROUNDING_NEGINF:
+        rmode = float_round_down;
+        break;
+    case FPROUNDING_ZERO:
+        rmode = float_round_to_zero;
+        break;
+    }
+
+    set_float_rounding_mode(rmode, fp_status);
+
+    return prev_rmode;
+}

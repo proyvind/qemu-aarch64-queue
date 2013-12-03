@@ -200,6 +200,20 @@ static inline bool use_goto_tb(DisasContext *s, int n, uint64_t dest)
     return true;
 }
 
+static TCGv_ptr get_fpstatus_ptr(void)
+{
+    TCGv_ptr statusptr = tcg_temp_new_ptr();
+    int offset;
+
+    /* In A64 all instructions (both FP and Neon) use the FPCR;
+     * there is no equivalent of the A32 Neon "standard FPSCR value".
+     */
+    offset = offsetof(CPUARMState, vfp.fp_status);
+    tcg_gen_addi_ptr(statusptr, cpu_env, offset);
+
+    return statusptr;
+}
+
 static inline void gen_goto_tb(DisasContext *s, int n, uint64_t dest)
 {
     TranslationBlock *tb;
@@ -3232,6 +3246,186 @@ static void disas_fp_imm(DisasContext *s, uint32_t insn)
     unsupported_encoding(s, insn);
 }
 
+static void handle_fpfpcvt(DisasContext *s, uint32_t insn, bool itof,
+                           int rmode)
+{
+    int rd = extract32(insn, 0, 5);
+    int rn = extract32(insn, 5, 5);
+    int scale = extract32(insn, 10, 6);
+    int opcode = extract32(insn, 16, 3);
+    bool sf = extract32(insn, 31, 1);
+    bool is_double = extract32(insn, 22, 1);
+    bool is_integer = extract32(insn, 21, 1);
+    bool is_signed = !(opcode & 1);
+    int freg_offs;
+    int fp_reg;
+    TCGv_i64 tcg_int;
+    TCGv_i32 tcg_single;
+    TCGv_i64 tcg_double;
+    TCGv_ptr tcg_fpstatus;
+    TCGv_i32 tcg_shift;
+    TCGv_i32 tcg_rmode;
+    TCGv_i64 tcg_tmp;
+
+    if (!sf && scale && scale < 32) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_fpstatus = get_fpstatus_ptr();
+
+    if (is_integer) {
+        tcg_shift = tcg_const_i32(0);
+    } else {
+        tcg_shift = tcg_const_i32(64 - scale);
+    }
+
+    if (itof) {
+        TCGv_i64 tcg_zero;
+
+        fp_reg = rd;
+        tcg_int = cpu_reg(s, rn);
+
+        freg_offs = offsetof(CPUARMState, vfp.regs[fp_reg * 2]);
+
+        if (!sf) {
+            TCGv_i64 tcg_extend = new_tmp_a64(s);
+
+            if (is_signed) {
+                tcg_gen_ext32s_i64(tcg_extend, tcg_int);
+            } else {
+                tcg_gen_ext32u_i64(tcg_extend, tcg_int);
+            }
+
+            tcg_int = tcg_extend;
+        }
+
+        tcg_zero = tcg_const_i64(0);
+        tcg_gen_st_i64(tcg_zero, cpu_env, freg_offs + sizeof(float64));
+        tcg_temp_free_i64(tcg_zero);
+
+        switch ((is_double ? 0x1 : 0) |
+                (is_signed ? 0x2 : 0)) {
+        case 0x0: /* unsigned scalar->single */
+            tcg_single = tcg_temp_new_i32();
+            tcg_tmp = tcg_temp_new_i64();
+            gen_helper_vfp_uqtos(tcg_single, tcg_int, tcg_shift, tcg_fpstatus);
+            tcg_gen_extu_i32_i64(tcg_tmp, tcg_single);
+            tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs);
+            tcg_temp_free_i32(tcg_single);
+            tcg_temp_free_i64(tcg_tmp);
+            break;
+        case 0x1: /* unsigned scalar->double */
+            tcg_double = tcg_temp_new_i64();
+            gen_helper_vfp_uqtod(tcg_double, tcg_int, tcg_shift, tcg_fpstatus);
+            tcg_gen_st_i64(tcg_double, cpu_env, freg_offs);
+            tcg_temp_free_i64(tcg_double);
+            break;
+        case 0x2: /* signed scalar->single */
+            tcg_single = tcg_temp_new_i32();
+            tcg_tmp = tcg_temp_new_i64();
+            gen_helper_vfp_sqtos(tcg_single, tcg_int, tcg_shift, tcg_fpstatus);
+            tcg_gen_extu_i32_i64(tcg_tmp, tcg_single);
+            tcg_gen_st_i64(tcg_tmp, cpu_env, freg_offs);
+            tcg_temp_free_i32(tcg_single);
+            tcg_temp_free_i64(tcg_tmp);
+            break;
+        case 0x3: /* signed scalar->double */
+            tcg_double = tcg_temp_new_i64();
+            gen_helper_vfp_sqtod(tcg_double, tcg_int, tcg_shift, tcg_fpstatus);
+            tcg_gen_st_i64(tcg_double, cpu_env, freg_offs);
+            tcg_temp_free_i64(tcg_double);
+            break;
+        default:
+            unallocated_encoding(s);
+        }
+    } else {
+        fp_reg = rn;
+        tcg_int = cpu_reg(s, rd);
+
+        freg_offs = offsetof(CPUARMState, vfp.regs[fp_reg * 2]);
+
+        tcg_rmode = tcg_const_i32(rmode);
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+
+        switch ((is_double ? 0x1 : 0) |
+                (is_signed ? 0x2 : 0)) {
+        case 0x0: /* unsigned single->scalar */
+            tcg_single = tcg_temp_new_i32();
+            tcg_tmp = tcg_temp_new_i64();
+            tcg_gen_ld32u_i64(tcg_tmp, cpu_env, freg_offs);
+            tcg_gen_trunc_i64_i32(tcg_single, tcg_tmp);
+            if (!sf) {
+                TCGv_i32 tcg_dest = tcg_temp_new_i32();
+                gen_helper_vfp_touls(tcg_dest, tcg_single, tcg_shift,
+                                     tcg_fpstatus);
+                tcg_gen_extu_i32_i64(tcg_int, tcg_dest);
+                tcg_temp_free_i32(tcg_dest);
+            } else {
+                gen_helper_vfp_touqs(tcg_int, tcg_single, tcg_shift,
+                                     tcg_fpstatus);
+            }
+            tcg_temp_free_i32(tcg_single);
+            tcg_temp_free_i64(tcg_tmp);
+            break;
+        case 0x1: /* unsigned double->scalar */
+            tcg_double = tcg_temp_new_i64();
+            tcg_gen_ld_i64(tcg_double, cpu_env, freg_offs);
+            if (!sf) {
+                gen_helper_vfp_tould(tcg_int, tcg_double, tcg_shift,
+                                     tcg_fpstatus);
+            } else {
+                gen_helper_vfp_touqd(tcg_int, tcg_double, tcg_shift,
+                                     tcg_fpstatus);
+            }
+            tcg_temp_free_i64(tcg_double);
+            break;
+        case 0x2: /* signed single->scalar */
+            tcg_single = tcg_temp_new_i32();
+            tcg_tmp = tcg_temp_new_i64();
+            tcg_gen_ld32u_i64(tcg_tmp, cpu_env, freg_offs);
+            tcg_gen_trunc_i64_i32(tcg_single, tcg_tmp);
+            if (!sf) {
+                TCGv_i32 tcg_dest = tcg_temp_new_i32();
+                gen_helper_vfp_tosls(tcg_dest, tcg_single, tcg_shift,
+                                     tcg_fpstatus);
+                tcg_gen_extu_i32_i64(tcg_int, tcg_dest);
+                tcg_temp_free_i32(tcg_dest);
+            } else {
+                gen_helper_vfp_tosqs(tcg_int, tcg_single, tcg_shift,
+                                     tcg_fpstatus);
+            }
+            tcg_temp_free_i32(tcg_single);
+            tcg_temp_free_i64(tcg_tmp);
+            break;
+        case 0x3: /* signed double->scalar */
+            tcg_double = tcg_temp_new_i64();
+            tcg_gen_ld_i64(tcg_double, cpu_env, freg_offs);
+            if (!sf) {
+                gen_helper_vfp_tosld(tcg_int, tcg_double, tcg_shift,
+                                     tcg_fpstatus);
+            } else {
+                gen_helper_vfp_tosqd(tcg_int, tcg_double, tcg_shift,
+                                     tcg_fpstatus);
+            }
+            tcg_temp_free_i64(tcg_double);
+            break;
+        default:
+            unallocated_encoding(s);
+        }
+
+        gen_helper_set_rmode(tcg_rmode, tcg_rmode, cpu_env);
+        tcg_temp_free_i32(tcg_rmode);
+
+        if (!sf) {
+            tcg_gen_ext32u_i64(tcg_int, tcg_int);
+        }
+    }
+
+    tcg_temp_free_ptr(tcg_fpstatus);
+    tcg_temp_free_i32(tcg_shift);
+}
+
 /* C3.6.29 Floating point <-> fixed point conversions
  *   31   30  29 28       24 23  22  21 20   19 18    16 15   10 9    5 4    0
  * +----+---+---+-----------+------+---+-------+--------+-------+------+------+
@@ -3240,7 +3434,38 @@ static void disas_fp_imm(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_fixed_conv(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    int opcode = extract32(insn, 16, 3);
+    int rmode = extract32(insn, 19, 2);
+    int type = extract32(insn, 22, 2);
+    bool sbit = extract32(insn, 29, 1);
+    bool itof;
+
+    if (sbit || (type > 1) || (opcode > 3)) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    switch (rmode) {
+    case 0x0: /* [S|U]CVTF (scalar->float) */
+        if (opcode < 2) {
+            unallocated_encoding(s);
+            return;
+        }
+        itof = true;
+        break;
+    case 0x3: /* FCVTZ[S|U] (float->scalar) */
+        if (opcode > 1) {
+            unallocated_encoding(s);
+            return;
+        }
+        itof = false;
+        break;
+    default:
+        unallocated_encoding(s);
+        return;
+    }
+
+    handle_fpfpcvt(s, insn, itof, FPROUNDING_ZERO);
 }
 
 static void handle_fmov(DisasContext *s, int rd, int rn, int type, bool itof)
