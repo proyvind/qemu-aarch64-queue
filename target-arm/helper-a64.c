@@ -77,3 +77,24 @@ uint64_t HELPER(rbit64)(uint64_t x)
 
     return x;
 }
+void HELPER(set_rmode)(uint32_t rmode, void *fp_status)
+{
+    switch (rmode) {
+    case FPROUNDING_TIEEVEN:
+    default:
+        rmode = float_round_nearest_even;
+        break;
+    case FPROUNDING_POSINF:
+        rmode = float_round_up;
+        break;
+    case FPROUNDING_NEGINF:
+        rmode = float_round_down;
+        break;
+    case FPROUNDING_ZERO:
+        rmode = float_round_to_zero;
+        break;
+    /* FIXME: add support for TIEAWAY and ODD */
+    }
+
+    set_float_rounding_mode(rmode, fp_status);
+}
