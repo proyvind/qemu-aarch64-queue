@@ -3592,6 +3592,30 @@ static void disas_fp_int_conv(DisasContext *s, uint32_t insn)
         }
 
         handle_fmov(s, rd, rn, type, itof);
+    } else if (!sbit && ((opcode & 6) != 06)) {
+        /* [S|U]CVTF and FCVT[N|P|M|Z][S|U] */
+        bool itof = opcode & 2;
+
+        if (type > 1) {
+            unallocated_encoding(s);
+            return;
+        }
+
+        switch (rmode << 3 | (opcode & 6)) {
+        case 0x0:  /* FCVTN */
+        case 0x2:  /* [SU]CVTF */
+        case 0x4:  /* FCVTA */
+        case 0x8:  /* FCVTP */
+        case 0x10: /* FCVTM */
+        case 0x18: /* FCVTZ */
+            break;
+        default:
+            /* all other rmode/opcode combinations are invalid */
+            unallocated_encoding(s);
+            break;
+        }
+
+        handle_fpfpcvt(s, insn, itof, rmode);
     } else {
         /* actual FP conversions */
         unsupported_encoding(s, insn);
