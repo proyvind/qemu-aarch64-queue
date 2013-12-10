@@ -1941,6 +1941,11 @@ void define_one_arm_cp_reg_with_opaque(ARMCPU *cpu,
      * At least one of the original and the second definition should
      * include ARM_CP_OVERRIDE in its type bits -- this is just a guard
      * against accidental use.
+     *
+     * ARM_CP_AA64 is set in the type field to define a register to
+     * be visible when in AArch64 state. In this case r->opc0 may also
+     * be set, and the ARM_CP_64BIT flag must not be set. opc0 can't
+     * be wildcarded.
      */
     int crm, opc1, opc2;
     int crmmin = (r->crm == CP_ANY) ? 0 : r->crm;
@@ -1951,6 +1956,53 @@ void define_one_arm_cp_reg_with_opaque(ARMCPU *cpu,
     int opc2max = (r->opc2 == CP_ANY) ? 7 : r->opc2;
     /* 64 bit registers have only CRm and Opc1 fields */
     assert(!((r->type & ARM_CP_64BIT) && (r->opc2 || r->crn)));
+    /* AArch64 regs are all 64 bit so the ARM_CP_64BIT flag is meaningless */
+    assert((r->type & (ARM_CP_64BIT|ARM_CP_AA64))
+           != (ARM_CP_64BIT|ARM_CP_AA64));
+    /* op0 only exists in the AArch64 encodings */
+    assert((r->type & ARM_CP_AA64) || (r->opc0 == 0));
+    /* The AArch64 pseudocode CheckSystemAccess() specifies that op1
+     * encodes a minimum access level for the register. We roll this
+     * runtime check into our general permission check code, so check
+     * here that the reginfo's specified permissions are strict enough
+     * to encompass the generic architectural permission check.
+     */
+    if (r->type & ARM_CP_AA64) {
+        int mask = 0;
+        switch (r->opc1) {
+        case 0: case 1: case 2:
+            /* min_EL EL1 */
+            mask = PL1_RW;
+            break;
+        case 3:
+            /* min_EL EL0 */
+            mask = PL0_RW;
+            break;
+        case 4:
+            /* min_EL EL2 */
+            mask = PL2_RW;
+            break;
+        case 5:
+            /* unallocated encoding, so not possible */
+            assert(false);
+            break;
+        case 6:
+            /* min_EL EL3 */
+            mask = PL3_RW;
+            break;
+        case 7:
+            /* min_EL EL1, secure mode only (we don't check the latter) */
+            mask = PL1_RW;
+            break;
+        default:
+            /* broken reginfo with out of range opc1 */
+            assert(false);
+            break;
+        }
+        /* assert our permissions are not too lax (stricter is fine) */
+        assert((r->access & ~mask) == 0);
+    }
+
     /* Check that the register definition has enough info to handle
      * reads and writes if they are permitted.
      */
@@ -1970,7 +2022,19 @@ void define_one_arm_cp_reg_with_opaque(ARMCPU *cpu,
                 uint32_t *key = g_new(uint32_t, 1);
                 ARMCPRegInfo *r2 = g_memdup(r, sizeof(ARMCPRegInfo));
                 int is64 = (r->type & ARM_CP_64BIT) ? 1 : 0;
-                *key = ENCODE_CP_REG(r->cp, is64, r->crn, crm, opc1, opc2);
+                if (r->type & ARM_CP_AA64) {
+                    /* To allow abbreviation of ARMCPRegInfo
+                     * definitions, we treat cp == 0 as equivalent to
+                     * the value for "standard guest-visible sysreg".
+                     */
+                    if (r->cp == 0) {
+                        r2->cp = CP_REG_ARM64_SYSREG_CP;
+                    }
+                    *key = ENCODE_AA64_CP_REG(r2->cp, r->crn, crm,
+                                              r->opc0, opc1, opc2);
+                } else {
+                    *key = ENCODE_CP_REG(r->cp, is64, r->crn, crm, opc1, opc2);
+                }
                 if (opaque) {
                     r2->opaque = opaque;
                 }
