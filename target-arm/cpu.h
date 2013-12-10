@@ -572,10 +572,33 @@ void armv7m_nvic_complete_irq(void *opaque, int irq);
  *    or via MRRC/MCRR?)
  * We allow 4 bits for opc1 because MRRC/MCRR have a 4 bit field.
  * (In this case crn and opc2 should be zero.)
+ * For AArch64, there is no 32/64 bit size distinction;
+ * instead all registers have a 2 bit op0, 3 bit op1 and op2,
+ * and 4 bit CRn and CRm. The encoding patterns are chosen
+ * to be easy to convert to and from the KVM encodings, and also
+ * so that the hashtable can contain both AArch32 and AArch64
+ * registers (to allow for interprocessing where we might run
+ * 32 bit code on a 64 bit core).
  */
+/* This bit is private to our hashtable cpreg; in KVM register
+ * IDs the AArch64/32 distinction is the KVM_REG_ARM/ARM64
+ * in the upper bits of the 64 bit ID.
+ */
+#define CP_REG_AA64_SHIFT 28
+#define CP_REG_AA64_MASK (1 << CP_REG_AA64_SHIFT)
+
 #define ENCODE_CP_REG(cp, is64, crn, crm, opc1, opc2)   \
     (((cp) << 16) | ((is64) << 15) | ((crn) << 11) |    \
      ((crm) << 7) | ((opc1) << 3) | (opc2))
+
+#define ENCODE_AA64_CP_REG(cp, crn, crm, op0, op1, op2) \
+    (CP_REG_AA64_MASK |                                 \
+     ((cp) << CP_REG_ARM_COPROC_SHIFT) |                \
+     ((op0) << CP_REG_ARM64_SYSREG_OP0_SHIFT) |         \
+     ((op1) << CP_REG_ARM64_SYSREG_OP1_SHIFT) |         \
+     ((crn) << CP_REG_ARM64_SYSREG_CRN_SHIFT) |         \
+     ((crm) << CP_REG_ARM64_SYSREG_CRM_SHIFT) |         \
+     ((op2) << CP_REG_ARM64_SYSREG_OP2_SHIFT))
 
 /* Convert a full 64 bit KVM register ID to the truncated 32 bit
  * version used as a key for the coprocessor register hashtable
@@ -583,7 +606,9 @@ void armv7m_nvic_complete_irq(void *opaque, int irq);
 static inline uint32_t kvm_to_cpreg_id(uint64_t kvmid)
 {
     uint32_t cpregid = kvmid;
-    if ((kvmid & CP_REG_SIZE_MASK) == CP_REG_SIZE_U64) {
+    if ((kvmid & CP_REG_ARCH_MASK) == CP_REG_ARM64) {
+        cpregid |= CP_REG_AA64_MASK;
+    } else if ((kvmid & CP_REG_SIZE_MASK) == CP_REG_SIZE_U64) {
         cpregid |= (1 << 15);
     }
     return cpregid;
@@ -594,11 +619,18 @@ static inline uint32_t kvm_to_cpreg_id(uint64_t kvmid)
  */
 static inline uint64_t cpreg_to_kvm_id(uint32_t cpregid)
 {
-    uint64_t kvmid = cpregid & ~(1 << 15);
-    if (cpregid & (1 << 15)) {
-        kvmid |= CP_REG_SIZE_U64 | CP_REG_ARM;
+    uint64_t kvmid;
+
+    if (cpregid & CP_REG_AA64_MASK) {
+        kvmid = cpregid & ~CP_REG_AA64_MASK;
+        kvmid |= CP_REG_SIZE_U64 | CP_REG_ARM64;
     } else {
-        kvmid |= CP_REG_SIZE_U32 | CP_REG_ARM;
+        kvmid = cpregid & ~(1 << 15);
+        if (cpregid & (1 << 15)) {
+            kvmid |= CP_REG_SIZE_U64 | CP_REG_ARM;
+        } else {
+            kvmid |= CP_REG_SIZE_U32 | CP_REG_ARM;
+        }
     }
     return kvmid;
 }
@@ -626,13 +658,14 @@ static inline uint64_t cpreg_to_kvm_id(uint32_t cpregid)
 #define ARM_CP_OVERRIDE 16
 #define ARM_CP_NO_MIGRATE 32
 #define ARM_CP_IO 64
+#define ARM_CP_AA64 128
 #define ARM_CP_NOP (ARM_CP_SPECIAL | (1 << 8))
 #define ARM_CP_WFI (ARM_CP_SPECIAL | (2 << 8))
 #define ARM_LAST_SPECIAL ARM_CP_WFI
 /* Used only as a terminator for ARMCPRegInfo lists */
 #define ARM_CP_SENTINEL 0xffff
 /* Mask of only the flag bits in a type field */
-#define ARM_CP_FLAG_MASK 0x7f
+#define ARM_CP_FLAG_MASK 0xff
 
 /* Return true if cptype is a valid type field. This is used to try to
  * catch errors where the sentinel has been accidentally left off the end
@@ -655,6 +688,8 @@ static inline bool cptype_valid(int cptype)
  * (ie anything visible in PL2 is visible in S-PL1, some things are only
  * visible in S-PL1) but "Secure PL1" is a bit of a mouthful, we bend the
  * terminology a little and call this PL3.
+ * In AArch64 things are somewhat simpler as the PLx bits line up exactly
+ * with the ELx exception levels.
  *
  * If access permissions for a register are more complex than can be
  * described with these bits, then use a laxer set of restrictions, and
@@ -676,6 +711,10 @@ static inline bool cptype_valid(int cptype)
 
 static inline int arm_current_pl(CPUARMState *env)
 {
+    if (env->aarch64) {
+        return extract32(env->pstate, 2, 2);
+    }
+
     if ((env->uncached_cpsr & 0x1f) == ARM_CPU_MODE_USR) {
         return 0;
     }
@@ -713,10 +752,18 @@ struct ARMCPRegInfo {
      * then behave differently on read/write if necessary.
      * For 64 bit registers, only crm and opc1 are relevant; crn and opc2
      * must both be zero.
+     * For AArch64-visible registers, opc0 is also used.
+     * Since there are no "coprocessors" in AArch64, cp is purely used as a
+     * way to distinguish (for KVM's benefit) guest-visible system registers
+     * from demuxed ones provided to preserve the "no side effects on
+     * KVM register read/write from QEMU" semantics. cp==0x13 is guest
+     * visible (to match KVM's encoding); cp==0 will be converted to
+     * cp==0x13 when the ARMCPRegInfo is registered, for convenience.
      */
     uint8_t cp;
     uint8_t crn;
     uint8_t crm;
+    uint8_t opc0;
     uint8_t opc1;
     uint8_t opc2;
     /* Register type: ARM_CP_* bits/values */
