@@ -1189,8 +1189,8 @@ static int target_setup_sigframe(struct target_rt_sigframe *sf,
         __put_user(env->vfp.regs[i * 2 + 1], &aux->fpsimd.vregs[i * 2 + 1]);
 #endif
     }
-    __put_user(/*env->fpsr*/0, &aux->fpsimd.fpsr);
-    __put_user(/*env->fpcr*/0, &aux->fpsimd.fpcr);
+    __put_user(vfp_get_fpsr(env), &aux->fpsimd.fpsr);
+    __put_user(vfp_get_fpcr(env), &aux->fpsimd.fpcr);
     __put_user(TARGET_FPSIMD_MAGIC, &aux->fpsimd.head.magic);
     __put_user(sizeof(struct target_fpsimd_context),
             &aux->fpsimd.head.size);
