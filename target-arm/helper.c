@@ -742,15 +742,15 @@ static const ARMCPRegInfo t2ee_cp_reginfo[] = {
 static const ARMCPRegInfo v6k_cp_reginfo[] = {
     { .name = "TPIDRURW", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 2,
       .access = PL0_RW,
-      .fieldoffset = offsetof(CPUARMState, cp15.c13_tls1),
+      .fieldoffset = offsetoflow32(CPUARMState, cp15.tpidr_el0),
       .resetvalue = 0 },
     { .name = "TPIDRURO", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 3,
       .access = PL0_R|PL1_W,
-      .fieldoffset = offsetof(CPUARMState, cp15.c13_tls2),
+      .fieldoffset = offsetoflow32(CPUARMState, cp15.tpidrro_el0),
       .resetvalue = 0 },
     { .name = "TPIDRPRW", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 4,
       .access = PL1_RW,
-      .fieldoffset = offsetof(CPUARMState, cp15.c13_tls3),
+      .fieldoffset = offsetoflow32(CPUARMState, cp15.tpidr_el1),
       .resetvalue = 0 },
     REGINFO_SENTINEL
 };
@@ -1612,6 +1612,15 @@ static const ARMCPRegInfo aarch64_cp_reginfo[] = {
     { .name = "DCZID_EL0", .opc0 = 3, .opc1 = 3, .opc2 = 7, .crn = 0, .crm = 0,
       .access = PL0_R, .type = ARM_CP_CONST | ARM_CP_AA64,
       .resetvalue = 0x10 },
+    { .name = "TPIDR_EL0", .opc0 = 3, .opc1 = 3, .opc2 = 2, .crn = 13, .crm = 0,
+      .access = PL0_RW, .type = ARM_CP_AA64,
+      .fieldoffset = offsetof(CPUARMState, cp15.tpidr_el0), .resetvalue = 0 },
+    { .name = "TPIDRRO_EL0", .opc0 = 3, .opc1 = 3, .opc2 = 3,
+      .crn = 13, .crm = 0, .access = PL0_R|PL1_W, .type = ARM_CP_AA64,
+      .fieldoffset = offsetof(CPUARMState, cp15.tpidrro_el0), .resetvalue = 0 },
+    { .name = "TPIDR_EL1", .opc0 = 3, .opc1 = 0, .opc2 = 4, .crn = 13, .crm = 0,
+      .access = PL1_RW, .type = ARM_CP_AA64,
+      .fieldoffset = offsetof(CPUARMState, cp15.tpidr_el1), .resetvalue = 0 },
     REGINFO_SENTINEL
 };
 
