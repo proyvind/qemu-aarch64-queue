@@ -2733,6 +2733,25 @@ static void disas_adc_sbc(DisasContext *s, uint32_t insn)
     }
 }
 
+/* this check is used for Conditional Compare and FP conditional Compare,
+ * to compare the condition and set the nzcv flags if no match.
+ * Returns the 'continue' label for later setting, while the calling code
+ * should proceed with the always/match code.
+ * Must call with a non-always cond. */
+static int gen_cc_check(TCGv_i64 tcg_tmp, unsigned int cond, unsigned int nzcv)
+{
+    int label_match, label_continue;
+    label_match = gen_new_label();
+    label_continue = gen_new_label();
+    arm_gen_test_cc(cond, label_match);
+    /* nomatch: */
+    tcg_gen_movi_i64(tcg_tmp, nzcv << 28);
+    gen_set_nzcv(tcg_tmp);
+    tcg_gen_br(label_continue);
+    gen_set_label(label_match);
+    return label_continue;
+}
+
 /* C3.5.4 - C3.5.5 Conditional compare (immediate / register)
  *  31 30 29 28 27 26 25 24 23 22 21  20    16 15  12  11  10  9   5  4 3   0
  * +--+--+--+------------------------+--------+------+----+--+------+--+-----+
@@ -2765,14 +2784,7 @@ static void disas_cc(DisasContext *s, uint32_t insn)
     tcg_tmp = tcg_temp_new_i64();
 
     if (cond < 0x0e) { /* not always */
-        int label_match = gen_new_label();
-        label_continue = gen_new_label();
-        arm_gen_test_cc(cond, label_match);
-        /* nomatch: */
-        tcg_gen_movi_i64(tcg_tmp, nzcv << 28);
-        gen_set_nzcv(tcg_tmp);
-        tcg_gen_br(label_continue);
-        gen_set_label(label_match);
+        label_continue = gen_cc_check(tcg_tmp, cond, nzcv);
     }
     /* match, or condition is always */
     if (is_imm) {
@@ -3176,12 +3188,64 @@ static void disas_data_proc_reg(DisasContext *s, uint32_t insn)
  * +---+---+---+-----------+------+---+------+-----+---------+------+--------+
  *  [0]     [0]                               [0 0]                 [opc 0 0 0]
  */
+
+static void handle_fp_compare(TCGv_i64 tcg_flags, unsigned int type,
+                              unsigned int rn, unsigned int rm,
+                              bool cmp_with_zero, bool signal_all_nans)
+{
+    tcg_target_long freg_offs_n, freg_offs_m;
+    TCGv_ptr fpst;
+
+    freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    fpst = get_fpstatus_ptr();
+
+    if (type == 0) {            /* single precision */
+        TCGv_i32 tcg_vn, tcg_vm;
+        tcg_vn = tcg_temp_new_i32();
+        tcg_vm = tcg_temp_new_i32();
+
+        tcg_gen_ld_i32(tcg_vn, cpu_env, freg_offs_n);
+        if (cmp_with_zero) { /* zero variant */
+            tcg_gen_movi_i32(tcg_vm, 0);
+        } else {
+            tcg_gen_ld_i32(tcg_vm, cpu_env, freg_offs_m);
+        }
+        if (signal_all_nans) { /* signal all nans */
+            gen_helper_vfp_cmpes_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        } else { /* quiet */
+            gen_helper_vfp_cmps_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        }
+        tcg_temp_free_i32(tcg_vn);
+        tcg_temp_free_i32(tcg_vm);
+    } else {                    /* double precision */
+        TCGv_i64 tcg_vn, tcg_vm;
+        tcg_vn = tcg_temp_new_i64();
+        tcg_vm = tcg_temp_new_i64();
+
+        tcg_gen_ld_i64(tcg_vn, cpu_env, freg_offs_n);
+        if (cmp_with_zero) { /* zero variant */
+            tcg_gen_movi_i64(tcg_vm, 0);
+        } else {
+            tcg_gen_ld_i64(tcg_vm, cpu_env, freg_offs_m);
+        }
+        if (signal_all_nans) { /* signal all nans */
+            gen_helper_vfp_cmped_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        } else { /* quiet */
+            gen_helper_vfp_cmpd_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        }
+        tcg_temp_free_i64(tcg_vn);
+        tcg_temp_free_i64(tcg_vm);
+    }
+
+    gen_set_nzcv(tcg_flags);
+    tcg_temp_free_ptr(fpst);
+}
+
 static void disas_fp_compare(DisasContext *s, uint32_t insn)
 {
     unsigned int mos, type, rm, op, rn, opc, op2r;
-    tcg_target_long freg_offs_n, freg_offs_m;
     TCGv_i64 tcg_flags;
-    TCGv_ptr fpst;
 
     mos = extract32(insn, 29, 3);
     type = extract32(insn, 22, 2); /* 0 = single, 1 = double */
@@ -3196,64 +3260,49 @@ static void disas_fp_compare(DisasContext *s, uint32_t insn)
         return;
     }
 
-    freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
-    freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
     tcg_flags = tcg_temp_new_i64();
-    fpst = get_fpstatus_ptr();
-
-    if (type == 0) {            /* single precision */
-        TCGv_i32 tcg_vn, tcg_vm;
-        tcg_vn = tcg_temp_new_i32();
-        tcg_vm = tcg_temp_new_i32();
-
-        tcg_gen_ld_i32(tcg_vn, cpu_env, freg_offs_n);
-        if (opc & 1) { /* zero variant */
-            tcg_gen_movi_i32(tcg_vm, 0);
-        } else {
-            tcg_gen_ld_i32(tcg_vm, cpu_env, freg_offs_m);
-        }
-        if (opc & 2) { /* signal all nans */
-            gen_helper_vfp_cmpes_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
-        } else { /* quiet */
-            gen_helper_vfp_cmps_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
-        }
-        tcg_temp_free_i32(tcg_vn);
-        tcg_temp_free_i32(tcg_vm);
-    } else {                    /* double precision */
-        TCGv_i64 tcg_vn, tcg_vm;
-        tcg_vn = tcg_temp_new_i64();
-        tcg_vm = tcg_temp_new_i64();
-
-        tcg_gen_ld_i64(tcg_vn, cpu_env, freg_offs_n);
-        if (opc & 1) { /* zero variant */
-            tcg_gen_movi_i64(tcg_vm, 0);
-        } else {
-            tcg_gen_ld_i64(tcg_vm, cpu_env, freg_offs_m);
-        }
-        if (opc & 2) { /* signal all nans */
-            gen_helper_vfp_cmped_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
-        } else { /* quiet */
-            gen_helper_vfp_cmpd_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
-        }
-        tcg_temp_free_i64(tcg_vn);
-        tcg_temp_free_i64(tcg_vm);
-    }
-
-    gen_set_nzcv(tcg_flags);
-
+    handle_fp_compare(tcg_flags, type, rn, rm, opc & 1, opc & 2);
     tcg_temp_free_i64(tcg_flags);
-    tcg_temp_free_ptr(fpst);
 }
 
 /* C3.6.23 Floating point conditional compare
- *   31  30  29 28       24 23  22  21 20  16 15  12 11 10 9    5  4   3    0
- * +---+---+---+-----------+------+---+------+------+-----+------+----+------+
- * | M | 0 | S | 1 1 1 1 0 | type | 1 |  Rm  | cond | 0 1 |  Rn  | op | nzcv |
- * +---+---+---+-----------+------+---+------+------+-----+------+----+------+
+ *   31  30  29 28       24 23  22  21 20  16 15  12 11 10 9    5  4 3    0
+ * +---+---+---+-----------+------+---+------+------+-----+------+--+------+
+ * | M | 0 | S | 1 1 1 1 0 | type | 1 |  Rm  | cond | 0 1 |  Rn  |op| nzcv |
+ * +---+---+---+-----------+------+---+------+------+-----+------+--+------+
  */
 static void disas_fp_ccomp(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    unsigned int mos, type, rm, cond, rn, op, nzcv;
+    TCGv_i64 tcg_flags;
+    int label_continue;
+
+    mos = extract32(insn, 29, 3);
+    type = extract32(insn, 22, 2); /* 0 = single, 1 = double */
+    rm = extract32(insn, 16, 5);
+    cond = extract32(insn, 12, 4);
+    rn = extract32(insn, 5, 5);
+    op = extract32(insn, 4, 1);
+    nzcv = extract32(insn, 0, 4);
+
+    if (mos || type > 1) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    tcg_flags = tcg_temp_new_i64();
+
+    if (cond < 0x0e) { /* not always */
+        label_continue = gen_cc_check(tcg_flags, cond, nzcv);
+    }
+
+    /* match, or condition is always */
+    handle_fp_compare(tcg_flags, type, rn, rm, false, op);
+    tcg_temp_free_i64(tcg_flags);
+
+    if (cond < 0x0e) { /* continue */
+        gen_set_label(label_continue);
+    }
 }
 
 /* C3.6.24 Floating point conditional select
