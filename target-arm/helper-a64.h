@@ -27,3 +27,8 @@ DEF_HELPER_FLAGS_2(rints_exact, TCG_CALL_NO_RWG_SE, f32, f32, ptr)
 DEF_HELPER_FLAGS_2(rintd_exact, TCG_CALL_NO_RWG_SE, f64, f64, ptr)
 DEF_HELPER_FLAGS_2(rints, TCG_CALL_NO_RWG_SE, f32, f32, ptr)
 DEF_HELPER_FLAGS_2(rintd, TCG_CALL_NO_RWG_SE, f64, f64, ptr)
+
+DEF_HELPER_3(vfp_cmps_a64, i64, f32, f32, ptr)
+DEF_HELPER_3(vfp_cmpes_a64, i64, f32, f32, ptr)
+DEF_HELPER_3(vfp_cmpd_a64, i64, f64, f64, ptr)
+DEF_HELPER_3(vfp_cmped_a64, i64, f64, f64, ptr)

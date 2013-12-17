@@ -3165,14 +3165,79 @@ static void disas_data_proc_reg(DisasContext *s, uint32_t insn)
 }
 
 /* C3.6.22 Floating point compare
- *   31  30  29 28       24 23  22  21 20  16 15 14 13  10    9    5 4     0
- * +---+---+---+-----------+------+---+------+-----+---------+------+-------+
- * | M | 0 | S | 1 1 1 1 0 | type | 1 |  Rm  | op  | 1 0 0 0 |  Rn  |  op2  |
- * +---+---+---+-----------+------+---+------+-----+---------+------+-------+
+ *   31  30  29 28       24 23  22  21 20  16 15 14 13  10    9    5 4 3 2 1 0
+ * +---+---+---+-----------+------+---+------+-----+---------+------+--------+
+ * | M | 0 | S | 1 1 1 1 0 | type | 1 |  Rm  | op  | 1 0 0 0 |  Rn  |   op2  |
+ * +---+---+---+-----------+------+---+------+-----+---------+------+--------+
+ *  [0]     [0]                               [0 0]                 [opc 0 0 0]
  */
 static void disas_fp_compare(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    unsigned int mos, type, rm, op, rn, opc, op2r;
+    tcg_target_long freg_offs_n, freg_offs_m;
+    TCGv_i64 tcg_flags;
+    TCGv_ptr fpst;
+
+    mos = extract32(insn, 29, 3);
+    type = extract32(insn, 22, 2); /* 0 = single, 1 = double */
+    rm = extract32(insn, 16, 5);
+    op = extract32(insn, 14, 2);
+    rn = extract32(insn, 5, 5);
+    opc = extract32(insn, 3, 2);
+    op2r = extract32(insn, 0, 3);
+
+    if (mos || op || op2r || type > 1) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    freg_offs_n = offsetof(CPUARMState, vfp.regs[rn * 2]);
+    freg_offs_m = offsetof(CPUARMState, vfp.regs[rm * 2]);
+    tcg_flags = tcg_temp_new_i64();
+    fpst = get_fpstatus_ptr();
+
+    if (type == 0) {            /* single precision */
+        TCGv_i32 tcg_vn, tcg_vm;
+        tcg_vn = tcg_temp_new_i32();
+        tcg_vm = tcg_temp_new_i32();
+
+        tcg_gen_ld_i32(tcg_vn, cpu_env, freg_offs_n);
+        if (opc & 1) { /* zero variant */
+            tcg_gen_movi_i32(tcg_vm, 0);
+        } else {
+            tcg_gen_ld_i32(tcg_vm, cpu_env, freg_offs_m);
+        }
+        if (opc & 2) { /* signal all nans */
+            gen_helper_vfp_cmpes_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        } else { /* quiet */
+            gen_helper_vfp_cmps_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        }
+        tcg_temp_free_i32(tcg_vn);
+        tcg_temp_free_i32(tcg_vm);
+    } else {                    /* double precision */
+        TCGv_i64 tcg_vn, tcg_vm;
+        tcg_vn = tcg_temp_new_i64();
+        tcg_vm = tcg_temp_new_i64();
+
+        tcg_gen_ld_i64(tcg_vn, cpu_env, freg_offs_n);
+        if (opc & 1) { /* zero variant */
+            tcg_gen_movi_i64(tcg_vm, 0);
+        } else {
+            tcg_gen_ld_i64(tcg_vm, cpu_env, freg_offs_m);
+        }
+        if (opc & 2) { /* signal all nans */
+            gen_helper_vfp_cmped_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        } else { /* quiet */
+            gen_helper_vfp_cmpd_a64(tcg_flags, tcg_vn, tcg_vm, fpst);
+        }
+        tcg_temp_free_i64(tcg_vn);
+        tcg_temp_free_i64(tcg_vm);
+    }
+
+    gen_set_nzcv(tcg_flags);
+
+    tcg_temp_free_i64(tcg_flags);
+    tcg_temp_free_ptr(fpst);
 }
 
 /* C3.6.23 Floating point conditional compare

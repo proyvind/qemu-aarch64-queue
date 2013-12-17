@@ -140,3 +140,48 @@ float64 HELPER(rintd)(float64 x, void *fp_status)
 
     return ret;
 }
+
+static uint64_t vfp_cmp_a64(int res)
+{
+    uint64_t flags;
+    switch (res) {
+    case 0:
+        flags = 0x6;
+        break;
+    case -1:
+        flags = 0x8;
+        break;
+    case 1:
+        flags = 0x2;
+        break;
+    case 2:
+    default:
+        flags = 0x3;
+        break;
+    }
+    return flags << 28;
+}
+
+uint64_t HELPER(vfp_cmps_a64)(float32 x, float32 y, void *fp_status)
+{
+    int res = float32_compare_quiet(x, y, fp_status);
+    return vfp_cmp_a64(res);
+}
+
+uint64_t HELPER(vfp_cmpes_a64)(float32 x, float32 y, void *fp_status)
+{
+    int res = float32_compare(x, y, fp_status);
+    return vfp_cmp_a64(res);
+}
+
+uint64_t HELPER(vfp_cmpd_a64)(float64 x, float64 y, void *fp_status)
+{
+    int res = float64_compare_quiet(x, y, fp_status);
+    return vfp_cmp_a64(res);
+}
+
+uint64_t HELPER(vfp_cmped_a64)(float64 x, float64 y, void *fp_status)
+{
+    int res = float64_compare(x, y, fp_status);
+    return vfp_cmp_a64(res);
+}
