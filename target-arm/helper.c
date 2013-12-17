@@ -3941,12 +3941,15 @@ uint##isz##_t HELPER(vfp_to##name##p##round)(float##fsz x, \
                                              void *fpstp) \
 { \
     float_status *fpst = fpstp; \
+    /* If scalb overflows or underflows don't make it visible. */ \
+    float_status dummy_status = *fpst; \
+    float_status *s = &dummy_status; \
     float##fsz tmp; \
     if (float##fsz##_is_any_nan(x)) { \
         float_raise(float_flag_invalid, fpst); \
         return 0; \
     } \
-    tmp = float##fsz##_scalbn(x, shift, fpst); \
+    tmp = float##fsz##_scalbn(x, shift, s); \
     return float##fsz##_to_##itype##round(tmp, fpst); \
 }
 
