@@ -3965,16 +3965,25 @@ float##fsz HELPER(vfp_##name##to##p)(uint##isz##_t  x, uint32_t shift, \
 
 #define VFP_CONV_FIX(name, p, fsz, isz, itype, sign)                   \
 VFP_CONV_FIX_FLOAT(name, p, fsz, isz, itype, sign)                     \
-VFP_CONV_FIX_ROUND(name, p, fsz, isz, itype, sign, _round_to_zero)
+VFP_CONV_FIX_ROUND(name, p, fsz, isz, itype, sign, _round_to_zero)     \
+VFP_CONV_FIX_ROUND(name, p, fsz, isz, itype, sign, )
+
+#define VFP_CONV_FIX_A64(name, p, fsz, isz, itype, sign)               \
+VFP_CONV_FIX_FLOAT(name, p, fsz, isz, itype, sign)                     \
+VFP_CONV_FIX_ROUND(name, p, fsz, isz, itype, sign, )
 
 VFP_CONV_FIX(sh, d, 64, 64, int16, )
 VFP_CONV_FIX(sl, d, 64, 64, int32, )
+VFP_CONV_FIX_A64(sq, d, 64, 64, int64, )
 VFP_CONV_FIX(uh, d, 64, 64, uint16, u)
 VFP_CONV_FIX(ul, d, 64, 64, uint32, u)
+VFP_CONV_FIX_A64(uq, d, 64, 64, uint64, u)
 VFP_CONV_FIX(sh, s, 32, 32, int16, )
 VFP_CONV_FIX(sl, s, 32, 32, int32, )
+VFP_CONV_FIX_A64(sq, s, 32, 64, int64, )
 VFP_CONV_FIX(uh, s, 32, 32, uint16, u)
 VFP_CONV_FIX(ul, s, 32, 32, uint32, u)
+VFP_CONV_FIX_A64(uq, s, 32, 64, uint64, u)
 #undef VFP_CONV_FIX
 #undef VFP_CONV_FIX_ROUND
 
