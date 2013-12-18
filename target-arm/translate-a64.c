@@ -3295,6 +3295,31 @@ static void disas_fp_ccomp(DisasContext *s, uint32_t insn)
     }
 }
 
+/* move to dst FP register a src FP register. Only single and double supp. */
+static void gen_mov_fp2fp(int type, unsigned int dst, unsigned int src)
+{
+    TCGv_i64 tcg_src;
+    tcg_target_long freg_offs_dst, freg_offs_src;
+    freg_offs_dst = offsetof(CPUARMState, vfp.regs[dst * 2]);
+    freg_offs_src = offsetof(CPUARMState, vfp.regs[src * 2]);
+
+    tcg_src = tcg_temp_new_i64();
+    switch (type) {
+    case 0: /* single precision */
+        tcg_gen_ld32u_i64(tcg_src, cpu_env, freg_offs_src);
+        break;
+    case 1: /* double precision */
+        tcg_gen_ld_i64(tcg_src, cpu_env, freg_offs_src);
+        break;
+    default:
+        assert(0); /* only single and double precision supported */
+    }
+    tcg_gen_st_i64(tcg_src, cpu_env, freg_offs_dst);
+    tcg_gen_movi_i64(tcg_src, 0);
+    tcg_gen_st_i64(tcg_src, cpu_env, freg_offs_dst + sizeof(float64));
+    tcg_temp_free_i64(tcg_src);
+}
+
 /* C3.6.24 Floating point conditional select
  *   31  30  29 28       24 23  22  21 20  16 15  12 11 10 9    5 4    0
  * +---+---+---+-----------+------+---+------+------+-----+------+------+
@@ -3303,7 +3328,36 @@ static void disas_fp_ccomp(DisasContext *s, uint32_t insn)
  */
 static void disas_fp_csel(DisasContext *s, uint32_t insn)
 {
-    unsupported_encoding(s, insn);
+    unsigned int mos, type, rm, cond, rn, rd;
+    int label_continue;
+
+    mos = extract32(insn, 29, 3);
+    type = extract32(insn, 22, 2); /* 0 = single, 1 = double */
+    rm = extract32(insn, 16, 5);
+    cond = extract32(insn, 12, 4);
+    rn = extract32(insn, 5, 5);
+    rd = extract32(insn, 0, 5);
+
+    if (mos || type > 1) {
+        unallocated_encoding(s);
+        return;
+    }
+
+    if (cond < 0x0e) { /* not always */
+        int label_match = gen_new_label();
+        label_continue = gen_new_label();
+        arm_gen_test_cc(cond, label_match);
+        /* nomatch: */
+        gen_mov_fp2fp(type, rd, rm);
+        tcg_gen_br(label_continue);
+        gen_set_label(label_match);
+    }
+    /* match, or always */
+    gen_mov_fp2fp(type, rd, rn);
+
+    if (cond < 0x0e) { /* continue */
+        gen_set_label(label_continue);
+    }
 }
 
 /* C3.6.25 Floating-point data-processing (1 source) - single precision */
