@@ -3278,6 +3278,7 @@ static void disas_fp_1src_single(DisasContext *s, uint32_t insn)
         break;
     default:
         unallocated_encoding(s);
+        skip_write = true;
         break;
     }
 
@@ -3305,6 +3306,7 @@ static void disas_fp_1src_double(DisasContext *s, uint32_t insn)
     TCGv_ptr fpst;
     TCGv_i64 tcg_op;
     TCGv_i64 tcg_res;
+    bool skip_write = false;
 
     if (opcode == 0x5) {
         unallocated_encoding(s);
@@ -3340,7 +3342,7 @@ static void disas_fp_1src_double(DisasContext *s, uint32_t insn)
     {
         TCGv_i32 tcg_tmp = tcg_temp_new_i32();
         gen_helper_vfp_fcvtsd(tcg_tmp, tcg_op, cpu_env);
-        tcg_gen_extu_i32_i64(tcg_op, tcg_tmp);
+        tcg_gen_extu_i32_i64(tcg_res, tcg_tmp);
         tcg_temp_free_i32(tcg_tmp);
         break;
     }
@@ -3367,12 +3369,15 @@ static void disas_fp_1src_double(DisasContext *s, uint32_t insn)
         break;
     default:
         unallocated_encoding(s);
+        skip_write = true;
         break;
     }
 
-    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
-    tcg_gen_movi_i64(tcg_res, 0);
-    tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d + sizeof(float64));
+    if (!skip_write) {
+        tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d);
+        tcg_gen_movi_i64(tcg_res, 0);
+        tcg_gen_st_i64(tcg_res, cpu_env, freg_offs_d + sizeof(float64));
+    }
 
     tcg_temp_free_ptr(fpst);
     tcg_temp_free_i64(tcg_op);
