@@ -358,7 +358,8 @@ struct ObjectClass
     Type type;
     GSList *interfaces;
 
-    const char *cast_cache[OBJECT_CLASS_CAST_CACHE];
+    const char *object_cast_cache[OBJECT_CLASS_CAST_CACHE];
+    const char *class_cast_cache[OBJECT_CLASS_CAST_CACHE];
 
     ObjectUnparent *unparent;
 };
@@ -535,6 +536,7 @@ struct InterfaceClass
     ObjectClass parent_class;
     /*< private >*/
     ObjectClass *concrete_class;
+    Type interface_type;
 };
 
 #define TYPE_INTERFACE "interface"
@@ -793,27 +795,6 @@ void object_property_add(Object *obj, const char *name, const char *type,
                          void *opaque, Error **errp);
 
 void object_property_del(Object *obj, const char *name, Error **errp);
-
-/**
- * object_property_add_uint8_ptr:
- * object_property_add_uint16_ptr:
- * object_property_add_uint32_ptr:
- * object_property_add_uint64_ptr:
- * @obj: the object to add a property to
- * @name: the name of the property
- * @v: pointer to value
- *
- * Add an integer property in memory.  This function will add a
- * property of the appropriate type.
- */
-void object_property_add_uint8_ptr(Object *obj, const char *name,
-                                   const uint8_t *v, Error **errp);
-void object_property_add_uint16_ptr(Object *obj, const char *name,
-                                    const uint16_t *v, Error **errp);
-void object_property_add_uint32_ptr(Object *obj, const char *name,
-                                    const uint32_t *v, Error **errp);
-void object_property_add_uint64_ptr(Object *obj, const char *name,
-                                    const uint64_t *v, Error **Errp);
 
 /**
  * object_property_find:
@@ -1132,6 +1113,58 @@ void object_property_add_bool(Object *obj, const char *name,
                               bool (*get)(Object *, Error **),
                               void (*set)(Object *, bool, Error **),
                               Error **errp);
+
+/**
+ * object_property_add_uint8_ptr:
+ * @obj: the object to add a property to
+ * @name: the name of the property
+ * @v: pointer to value
+ * @errp: if an error occurs, a pointer to an area to store the error
+ *
+ * Add an integer property in memory.  This function will add a
+ * property of type 'uint8'.
+ */
+void object_property_add_uint8_ptr(Object *obj, const char *name,
+                                   const uint8_t *v, Error **errp);
+
+/**
+ * object_property_add_uint16_ptr:
+ * @obj: the object to add a property to
+ * @name: the name of the property
+ * @v: pointer to value
+ * @errp: if an error occurs, a pointer to an area to store the error
+ *
+ * Add an integer property in memory.  This function will add a
+ * property of type 'uint16'.
+ */
+void object_property_add_uint16_ptr(Object *obj, const char *name,
+                                    const uint16_t *v, Error **errp);
+
+/**
+ * object_property_add_uint32_ptr:
+ * @obj: the object to add a property to
+ * @name: the name of the property
+ * @v: pointer to value
+ * @errp: if an error occurs, a pointer to an area to store the error
+ *
+ * Add an integer property in memory.  This function will add a
+ * property of type 'uint32'.
+ */
+void object_property_add_uint32_ptr(Object *obj, const char *name,
+                                    const uint32_t *v, Error **errp);
+
+/**
+ * object_property_add_uint64_ptr:
+ * @obj: the object to add a property to
+ * @name: the name of the property
+ * @v: pointer to value
+ * @errp: if an error occurs, a pointer to an area to store the error
+ *
+ * Add an integer property in memory.  This function will add a
+ * property of type 'uint64'.
+ */
+void object_property_add_uint64_ptr(Object *obj, const char *name,
+                                    const uint64_t *v, Error **Errp);
 
 /**
  * object_child_foreach:
